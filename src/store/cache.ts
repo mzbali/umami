@@ -2,8 +2,8 @@ import { create } from 'zustand';
 
 const store = create(() => ({}));
 
-export function setValue(key, value) {
+export function setValue(key: string, value: any) {
   store.setState({ [key]: value });
 }
 
-export default store;
+export const useCache = store;

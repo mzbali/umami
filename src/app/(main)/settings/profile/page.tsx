@@ -1,16 +1,10 @@
-import ProfileHeader from './ProfileHeader';
-import ProfileSettings from './ProfileSettings';
-import { Metadata } from 'next';
+import type { Metadata } from 'next';
+import { ProfilePage } from './ProfilePage';
 
 export default function () {
-  return (
-    <>
-      <ProfileHeader />
-      <ProfileSettings />
-    </>
-  );
+  return <ProfilePage />;
 }
 
 export const metadata: Metadata = {
-  title: 'Profile Settings | umami',
+  title: 'Profile',
 };

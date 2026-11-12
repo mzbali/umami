@@ -1,25 +1,16 @@
-import LoginForm from './LoginForm';
-import { Metadata } from 'next';
-import styles from './page.module.css';
+import type { Metadata } from 'next';
+import { LoginPage } from './LoginPage';
 
-async function getDisabled() {
-  return !!process.env.LOGIN_DISABLED;
-}
+export const dynamic = 'force-dynamic';
 
-export default async function LoginPage() {
-  const disabled = await getDisabled();
-
-  if (disabled) {
+export default async function () {
+  if (process.env.DISABLE_LOGIN || process.env.CLOUD_MODE) {
     return null;
   }
 
-  return (
-    <div className={styles.page}>
-      <LoginForm />
-    </div>
-  );
+  return <LoginPage />;
 }
 
 export const metadata: Metadata = {
-  title: 'Login | umami',
+  title: 'Login',
 };

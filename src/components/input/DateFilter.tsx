@@ -1,170 +1,161 @@
-import { useState } from 'react';
-import { Icon, Modal, Dropdown, Item, Text, Flexbox } from 'react-basics';
-import { endOfYear, isSameDay } from 'date-fns';
-import DatePickerForm from 'components/metrics/DatePickerForm';
-import useLocale from 'components/hooks/useLocale';
-import useMessages from 'components/hooks/useMessages';
-import Icons from 'components/icons';
-import { formatDate } from 'lib/date';
+import { Dialog, ListItem, ListSeparator, Modal, Select, type SelectProps } from '@umami/react-zen';
+import { Fragment, type Key, useState } from 'react';
+import { ControlledDialog } from '@/components/common/ControlledDialog';
+import { DateDisplay } from '@/components/common/DateDisplay';
+import { useMessages, useMobile } from '@/components/hooks';
+import { DatePickerForm } from '@/components/metrics/DatePickerForm';
+import { getMaxSelectableDate, parseDateRange } from '@/lib/date';
 
-export interface DateFilterProps {
-  value: string;
-  startDate: Date;
-  endDate: Date;
-  className?: string;
+export interface DateFilterProps extends Omit<SelectProps, 'value' | 'onChange'> {
+  value?: string;
   onChange?: (value: string) => void;
-  selectedUnit?: string;
   showAllTime?: boolean;
-  alignment?: 'start' | 'center' | 'end';
+  renderDate?: boolean;
+  placement?: any;
 }
 
 export function DateFilter({
   value,
-  startDate,
-  endDate,
-  className,
   onChange,
-  selectedUnit,
-  showAllTime = false,
-  alignment = 'end',
+  showAllTime,
+  renderDate,
+  placement = 'bottom',
+  ...props
 }: DateFilterProps) {
-  const { formatMessage, labels } = useMessages();
+  const { t, labels } = useMessages();
   const [showPicker, setShowPicker] = useState(false);
+  const { startDate, endDate } = parseDateRange(value) || {};
+  const { isMobile } = useMobile();
 
   const options = [
-    { label: formatMessage(labels.today), value: '1day' },
+    { label: t(labels.today), value: '0day' },
     {
-      label: formatMessage(labels.lastHours, { x: 24 }),
+      label: t(labels.lastHours, { x: '24' }),
       value: '24hour',
     },
     {
-      label: formatMessage(labels.yesterday),
-      value: '-1day',
-    },
-    {
-      label: formatMessage(labels.thisWeek),
-      value: '1week',
+      label: t(labels.thisWeek),
+      value: '0week',
       divider: true,
     },
     {
-      label: formatMessage(labels.lastDays, { x: 7 }),
+      label: t(labels.lastDays, { x: '7' }),
       value: '7day',
     },
     {
-      label: formatMessage(labels.thisMonth),
-      value: '1month',
+      label: t(labels.thisMonth),
+      value: '0month',
       divider: true,
     },
     {
-      label: formatMessage(labels.lastDays, { x: 30 }),
+      label: t(labels.lastDays, { x: '30' }),
       value: '30day',
     },
     {
-      label: formatMessage(labels.lastDays, { x: 90 }),
+      label: t(labels.lastDays, { x: '90' }),
       value: '90day',
     },
-    { label: formatMessage(labels.thisYear), value: '1year' },
+    { label: t(labels.thisYear), value: '0year' },
+    {
+      label: t(labels.lastMonths, { x: '6' }),
+      value: '6month',
+      divider: true,
+    },
+    {
+      label: t(labels.lastMonths, { x: '12' }),
+      value: '12month',
+    },
     showAllTime && {
-      label: formatMessage(labels.allTime),
+      label: t(labels.allTime),
       value: 'all',
       divider: true,
     },
     {
-      label: formatMessage(labels.customRange),
+      label: t(labels.customRange),
       value: 'custom',
       divider: true,
     },
-  ].filter(n => n);
+  ]
+    .filter(n => n)
+    .map((a, id) => ({ ...a, id }));
 
-  const renderValue = (value: string) => {
-    return value.startsWith('range') ? (
-      <CustomRange
-        startDate={startDate}
-        endDate={endDate}
-        selectedUnit={selectedUnit}
-        onClick={() => handleChange('custom')}
-      />
-    ) : (
-      options.find(e => e.value === value).label
-    );
-  };
-
-  const handleChange = (value: string) => {
+  const handleChange = (value: Key) => {
     if (value === 'custom') {
       setShowPicker(true);
       return;
     }
-    onChange(value);
+    onChange(value.toString());
   };
 
   const handlePickerChange = (value: string) => {
     setShowPicker(false);
-    onChange(value);
+    onChange(value.toString());
   };
 
-  const handleClose = () => setShowPicker(false);
+  const renderValue = ({ defaultChildren }) => {
+    return (value?.startsWith('range') || renderDate) && startDate && endDate ? (
+      <DateDisplay startDate={startDate} endDate={endDate} />
+    ) : (
+      defaultChildren
+    );
+  };
+
+  const selectedValue = value.endsWith(':all') ? 'all' : value;
+
+  const [side, align] = String(placement).split(' ');
 
   return (
     <>
-      <Dropdown
-        className={className}
-        items={options}
+      <Select
+        {...props}
+        value={selectedValue}
+        placeholder={t(labels.selectDate)}
+        onChange={handleChange}
         renderValue={renderValue}
-        value={value}
-        alignment={alignment}
-        placeholder={formatMessage(labels.selectDate)}
-        onChange={key => handleChange(key as any)}
+        popoverProps={{
+          side: side as any,
+          align: (align === 'top' ? 'start' : align === 'bottom' ? 'end' : align) as any,
+          style: isMobile
+            ? {
+                // Base UI's positioned wrapper contains React Zen's fullscreen popup.
+                position: 'fixed',
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: 0,
+                width: '100vw',
+                height: '100dvh',
+                transform: 'none',
+              }
+            : { minWidth: 200 },
+        }}
+        isFullscreen={isMobile}
       >
-        {({ label, value, divider }) => (
-          <Item key={value} divider={divider}>
-            {label}
-          </Item>
-        )}
-      </Dropdown>
+        {options.map(({ label, value, divider }: any) => {
+          return (
+            <Fragment key={label}>
+              {divider && <ListSeparator />}
+              <ListItem id={value}>{label}</ListItem>
+            </Fragment>
+          );
+        })}
+      </Select>
       {showPicker && (
-        <Modal onClose={handleClose}>
-          <DatePickerForm
-            startDate={startDate}
-            endDate={endDate}
-            minDate={new Date(2000, 0, 1)}
-            maxDate={endOfYear(new Date())}
-            onChange={handlePickerChange}
-            onClose={() => setShowPicker(false)}
-          />
-        </Modal>
+        <ControlledDialog>
+          <Modal isOpen={true}>
+            <Dialog>
+              <DatePickerForm
+                startDate={startDate}
+                endDate={endDate}
+                minDate={new Date(2000, 0, 1)}
+                maxDate={getMaxSelectableDate()}
+                onChange={handlePickerChange}
+                onClose={() => setShowPicker(false)}
+              />
+            </Dialog>
+          </Modal>
+        </ControlledDialog>
       )}
     </>
   );
 }
-
-const CustomRange = ({ startDate, endDate, selectedUnit, onClick }) => {
-  const { locale } = useLocale();
-
-  const monthFormat = +selectedUnit?.num === 1 && selectedUnit?.unit === 'month';
-
-  function handleClick(e) {
-    e.stopPropagation();
-
-    onClick();
-  }
-
-  return (
-    <Flexbox gap={10} alignItems="center" wrap="nowrap">
-      <Icon className="mr-2" onClick={handleClick}>
-        <Icons.Calendar />
-      </Icon>
-      <Text>
-        {monthFormat ? (
-          <>{formatDate(startDate, 'MMMM yyyy', locale)}</>
-        ) : (
-          <>
-            {formatDate(startDate, 'd LLL y', locale)}
-            {!isSameDay(startDate, endDate) && ` — ${formatDate(endDate, 'd LLL y', locale)}`}
-          </>
-        )}
-      </Text>
-    </Flexbox>
-  );
-};
-
-export default DateFilter;

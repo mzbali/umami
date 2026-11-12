@@ -1,52 +1,39 @@
-import { useEffect } from 'react';
-import { StatusLight } from 'react-basics';
+import { Row, StatusLight, Text } from '@umami/react-zen';
+import type { LegendItem } from 'chart.js/auto';
 import { colord } from 'colord';
-import classNames from 'classnames';
-import useLocale from 'components/hooks/useLocale';
-import useForceUpdate from 'components/hooks/useForceUpdate';
-import styles from './Legend.module.css';
 
-export function Legend({ chart }) {
-  const { locale } = useLocale();
-  const forceUpdate = useForceUpdate();
-
-  const handleClick = index => {
-    const meta = chart.getDatasetMeta(index);
-
-    meta.hidden = meta.hidden === null ? !chart.data.datasets[index].hidden : null;
-
-    chart.update();
-
-    forceUpdate();
-  };
-
-  useEffect(() => {
-    forceUpdate();
-  }, [locale, forceUpdate]);
-
-  if (!chart?.legend?.legendItems.find(({ text }) => text)) {
+export function Legend({
+  items = [],
+  onClick,
+}: {
+  items: any[];
+  onClick: (index: LegendItem) => void;
+}) {
+  if (!items.find(({ text }) => text)) {
     return null;
   }
 
   return (
-    <div className={styles.legend}>
-      {chart.legend.legendItems.map(({ text, fillStyle, datasetIndex, hidden }) => {
+    <Row gap wrap="wrap" justifyContent="center">
+      {items.map(item => {
+        const { text, fillStyle, hidden } = item;
         const color = colord(fillStyle);
 
         return (
-          <div
-            key={text}
-            className={classNames(styles.label, { [styles.hidden]: hidden })}
-            onClick={() => handleClick(datasetIndex)}
-          >
+          <Row key={text} onClick={() => onClick(item)}>
             <StatusLight color={color.alpha(color.alpha() + 0.2).toHex()}>
-              <span className={locale}>{text}</span>
+              <Text
+                size="sm"
+                color={hidden ? 'disabled' : undefined}
+                truncate={true}
+                style={{ maxWidth: '300px' }}
+              >
+                {text}
+              </Text>
             </StatusLight>
-          </div>
+          </Row>
         );
       })}
-    </div>
+    </Row>
   );
 }
-
-export default Legend;

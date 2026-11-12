@@ -1,10 +1,12 @@
-import { Metadata } from 'next';
-import Websites from './Websites';
+import type { Metadata } from 'next';
+import { WebsitesSettingsPage } from './WebsitesSettingsPage';
 
-export default function () {
-  return <Websites />;
+export default async function ({ params }: { params: Promise<{ teamId: string }> }) {
+  const { teamId } = await params;
+
+  return <WebsitesSettingsPage teamId={teamId} />;
 }
 
 export const metadata: Metadata = {
-  title: 'Websites Settings | umami',
+  title: 'Websites',
 };

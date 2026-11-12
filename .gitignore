@@ -4,28 +4,44 @@
 node_modules
 .pnp
 .pnp.js
+.pnpm-store
+package-lock.json
 
 # testing
 /coverage
+/playwright-report
+/test-results
 
 # next.js
-/.next/
-/out/
-/prisma/
+next-env.d.ts
+/.next
+/out
 
 # production
 /build
 /public/script.js
+/public/recorder.js
+/public/openapi.json
 /geo
 /dist
+/packages/*/dist
+/generated
+/src/generated
+pm2.yml
 
 # misc
 .DS_Store
 .idea
+.yarn
 *.iml
 *.log
 .vscode
 .tool-versions
+.claude
+.agents
+tmpclaude*
+CLAUDE.md
+nul
 
 # debug
 npm-debug.log*
@@ -35,6 +51,12 @@ yarn-error.log*
 # local env files
 .env
 .env.*
+*.env.*
 
 *.dev.yml
 
+# api integration test runtime state
+/tests/api/.runtime
+
+# local PR review worktrees
+/.review-pr-*/

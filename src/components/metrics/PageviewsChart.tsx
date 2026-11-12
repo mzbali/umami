@@ -1,51 +1,98 @@
-import { useMemo } from 'react';
-import BarChart, { BarChartProps } from './BarChart';
-import { useLocale, useTheme, useMessages } from 'components/hooks';
-import { renderDateLabels, renderStatusTooltipPopup } from 'lib/charts';
+import { useTheme } from '@umami/react-zen';
+import { useCallback, useMemo } from 'react';
+import { BarChart, type BarChartProps } from '@/components/charts/BarChart';
+import { useLocale, useMessages } from '@/components/hooks';
+import { renderDateLabels } from '@/lib/charts';
+import { getThemeColors } from '@/lib/colors';
+import { generateTimeSeries } from '@/lib/date';
 
 export interface PageviewsChartProps extends BarChartProps {
   data: {
-    sessions: any[];
     pageviews: any[];
+    sessions: any[];
+    compare?: {
+      pageviews: any[];
+      sessions: any[];
+    };
   };
   unit: string;
-  isLoading?: boolean;
 }
 
-export function PageviewsChart({ data, unit, isLoading, ...props }: PageviewsChartProps) {
-  const { formatMessage, labels } = useMessages();
-  const { colors } = useTheme();
-  const { locale } = useLocale();
+export function PageviewsChart({ data, unit, minDate, maxDate, ...props }: PageviewsChartProps) {
+  const { t, labels } = useMessages();
+  const { theme } = useTheme();
+  const { locale, dateLocale } = useLocale();
+  const { colors } = useMemo(() => getThemeColors(theme), [theme]);
 
-  const datasets = useMemo(() => {
-    if (!data) return [];
+  const chartData: any = useMemo(() => {
+    if (!data) return;
 
-    return [
-      {
-        label: formatMessage(labels.visitors),
-        data: data.sessions,
-        borderWidth: 1,
-        ...colors.chart.visitors,
-      },
-      {
-        label: formatMessage(labels.views),
-        data: data.pageviews,
-        borderWidth: 1,
-        ...colors.chart.views,
-      },
-    ];
-  }, [data, colors, formatMessage, labels]);
+    return {
+      __id: Date.now(),
+      datasets: [
+        {
+          type: 'bar',
+          label: t(labels.visitors),
+          data: generateTimeSeries(data.sessions, minDate, maxDate, unit, dateLocale),
+          borderWidth: 1,
+          barPercentage: 0.9,
+          categoryPercentage: 0.9,
+          ...colors.chart.visitors,
+          order: 3,
+        },
+        {
+          type: 'bar',
+          label: t(labels.views),
+          data: generateTimeSeries(data.pageviews, minDate, maxDate, unit, dateLocale),
+          barPercentage: 0.9,
+          categoryPercentage: 0.9,
+          borderWidth: 1,
+          ...colors.chart.views,
+          order: 4,
+        },
+        ...(data.compare
+          ? [
+              {
+                type: 'line',
+                label: `${t(labels.views)} (${t(labels.previous)})`,
+                data: generateTimeSeries(
+                  data.compare.pageviews,
+                  minDate,
+                  maxDate,
+                  unit,
+                  dateLocale,
+                ),
+                borderWidth: 2,
+                backgroundColor: '#8601B0',
+                borderColor: '#8601B0',
+                order: 1,
+              },
+              {
+                type: 'line',
+                label: `${t(labels.visitors)} (${t(labels.previous)})`,
+                data: generateTimeSeries(data.compare.sessions, minDate, maxDate, unit, dateLocale),
+                borderWidth: 2,
+                backgroundColor: '#f15bb5',
+                borderColor: '#f15bb5',
+                order: 2,
+              },
+            ]
+          : []),
+      ],
+    };
+  }, [data, locale]);
+
+  const renderXLabel = useCallback(renderDateLabels(unit, locale), [unit, locale]);
 
   return (
     <BarChart
       {...props}
-      datasets={datasets}
+      chartData={chartData}
       unit={unit}
-      isLoading={isLoading}
-      renderXLabel={renderDateLabels(unit, locale)}
-      renderTooltipPopup={renderStatusTooltipPopup(unit, locale)}
+      minDate={minDate}
+      maxDate={maxDate}
+      renderXLabel={renderXLabel}
+      height="400px"
     />
   );
 }
-
-export default PageviewsChart;

@@ -1,11 +1,12 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { IntlProvider } from 'react-intl';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ReactBasicsProvider } from 'react-basics';
-import ErrorBoundary from 'components/common/ErrorBoundary';
-import SettingsContext from 'app/(main)/settings/SettingsContext';
-import useLocale from 'components/hooks/useLocale';
+import { RouterProvider, ZenProvider } from '@umami/react-zen';
+import { NextIntlClientProvider } from 'next-intl';
+import { type ReactNode, useEffect } from 'react';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { useLocale } from '@/components/hooks';
+import { type Config, ConfigContext } from '@/components/hooks/useConfig';
+import { FlagsContext, type FlagValues } from '@/components/hooks/useFlag';
 import 'chartjs-adapter-date-fns';
 
 const client = new QueryClient({
@@ -13,49 +14,48 @@ const client = new QueryClient({
     queries: {
       retry: false,
       refetchOnWindowFocus: false,
+      staleTime: 1000 * 60,
     },
   },
 });
 
 function MessagesProvider({ children }) {
-  const { locale, messages } = useLocale();
-  return (
-    <IntlProvider locale={locale} messages={messages[locale]} onError={() => null}>
-      {children}
-    </IntlProvider>
-  );
-}
-
-function SettingsProvider({ children }) {
-  const [config, setConfig] = useState({});
+  const { locale, messages, dir } = useLocale();
 
   useEffect(() => {
-    const hostUrl = process.env.hostUrl || window?.location.origin;
+    document.documentElement.setAttribute('dir', dir);
+    document.documentElement.setAttribute('lang', locale);
+  }, [locale, dir]);
 
-    setConfig({
-      shareUrl: hostUrl,
-      trackingCodeUrl: hostUrl,
-      websitesUrl: '/websites',
-      settingsPath: '/settings/websites',
-      websitesPath: `/websites`,
-    });
-  }, []);
-
-  return <SettingsContext.Provider value={config}>{children}</SettingsContext.Provider>;
-}
-
-export function Providers({ children }) {
   return (
-    <MessagesProvider>
-      <SettingsProvider>
-        <QueryClientProvider client={client}>
-          <ReactBasicsProvider>
-            <ErrorBoundary>{children}</ErrorBoundary>
-          </ReactBasicsProvider>
-        </QueryClientProvider>
-      </SettingsProvider>
-    </MessagesProvider>
+    <NextIntlClientProvider locale={locale} messages={messages[locale]} onError={() => null}>
+      {children}
+    </NextIntlClientProvider>
   );
 }
 
-export default Providers;
+export function Providers({
+  config,
+  flags,
+  children,
+}: {
+  config: Config;
+  flags: FlagValues;
+  children: ReactNode;
+}) {
+  return (
+    <ConfigContext.Provider value={config}>
+      <FlagsContext.Provider value={flags}>
+        <ZenProvider>
+          <RouterProvider>
+            <MessagesProvider>
+              <QueryClientProvider client={client}>
+                <ErrorBoundary>{children}</ErrorBoundary>
+              </QueryClientProvider>
+            </MessagesProvider>
+          </RouterProvider>
+        </ZenProvider>
+      </FlagsContext.Provider>
+    </ConfigContext.Provider>
+  );
+}

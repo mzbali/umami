@@ -1,14 +1,15 @@
-import cache from 'lib/cache';
-import { getSession, getUserById, getWebsiteById } from 'queries';
-import { User, Website, Session } from '@prisma/client';
+import type { Session, Website } from '@/generated/prisma/client';
+import redis from '@/lib/redis';
+import { getWebsite } from '@/queries/prisma';
+import { getWebsiteSession } from '@/queries/sql';
 
-export async function loadWebsite(websiteId: string): Promise<Website> {
-  let website;
+export async function fetchWebsite(websiteId: string): Promise<Website> {
+  let website = null;
 
-  if (cache.enabled) {
-    website = await cache.fetchWebsite(websiteId);
+  if (redis.enabled) {
+    website = await redis.client.fetch(`website:${websiteId}`, () => getWebsite(websiteId), 86400);
   } else {
-    website = await getWebsiteById(websiteId);
+    website = await getWebsite(websiteId);
   }
 
   if (!website || website.deletedAt) {
@@ -18,13 +19,17 @@ export async function loadWebsite(websiteId: string): Promise<Website> {
   return website;
 }
 
-export async function loadSession(sessionId: string): Promise<Session> {
-  let session;
+export async function fetchSession(websiteId: string, sessionId: string): Promise<Session> {
+  let session = null;
 
-  if (cache.enabled) {
-    session = await cache.fetchSession(sessionId);
+  if (redis.enabled) {
+    session = await redis.client.fetch(
+      `session:${sessionId}`,
+      () => getWebsiteSession(websiteId, sessionId),
+      86400,
+    );
   } else {
-    session = await getSession(sessionId);
+    session = await getWebsiteSession(websiteId, sessionId);
   }
 
   if (!session) {
@@ -34,18 +39,105 @@ export async function loadSession(sessionId: string): Promise<Session> {
   return session;
 }
 
-export async function loadUser(userId: string): Promise<User> {
-  let user;
+export async function fetchAccount(userId: string) {
+  const account = await redis.client.get(`account:${userId}`);
 
-  if (cache.enabled) {
-    user = await cache.fetchUser(userId);
-  } else {
-    user = await getUserById(userId);
+  return account;
+}
+
+export async function fetchTeam(teamId: string) {
+  const team = await redis.client.get(`team:${teamId}`);
+
+  return team;
+}
+
+export type BillingScope = {
+  accountId?: string | null;
+  teamId?: string | null;
+};
+
+export async function getEntityBillingScope({
+  userId,
+  teamId,
+}: Pick<Website, 'userId' | 'teamId'>): Promise<BillingScope> {
+  if (!teamId) {
+    return { accountId: userId };
   }
 
-  if (!user || user.deletedAt) {
+  if (!process.env.CLOUD_MODE || !redis.enabled) {
+    return { teamId };
+  }
+
+  const team = await fetchTeam(teamId);
+
+  return { accountId: team?.teamOwnerId, teamId };
+}
+
+export const getWebsiteBillingScope = getEntityBillingScope;
+
+export async function getTeamBillingScope(teamId: string): Promise<BillingScope> {
+  if (!process.env.CLOUD_MODE || !redis.enabled) {
+    return { teamId };
+  }
+
+  const team = await fetchTeam(teamId);
+
+  return { accountId: team?.teamOwnerId, teamId };
+}
+
+export async function getBillingAccess(scope: BillingScope, userId?: string | null) {
+  if (!process.env.CLOUD_MODE || !redis.enabled) {
+    return { isPastDue: false, isOwner: false };
+  }
+
+  const billingStatus = scope.accountId
+    ? (await fetchAccount(scope.accountId))?.billingStatus
+    : null;
+
+  return {
+    isPastDue: billingStatus === 'past_due',
+    isOwner: !!userId && userId === scope.accountId,
+  };
+}
+
+export async function addTeamBillingStatus<T extends { id: string }>(teams: T[]) {
+  if (!process.env.CLOUD_MODE || !redis.enabled) {
+    return teams;
+  }
+
+  return Promise.all(
+    teams.map(async team => {
+      const cachedTeam = await fetchTeam(team.id);
+      const account = cachedTeam?.teamOwnerId ? await fetchAccount(cachedTeam.teamOwnerId) : null;
+
+      return {
+        ...team,
+        billingStatus: account?.billingStatus ?? null,
+      };
+    }),
+  );
+}
+
+export async function getCollectionBlockReason(accountId?: string | null) {
+  if (!process.env.CLOUD_MODE || !redis.enabled || !accountId) {
     return null;
   }
 
-  return user;
+  return redis.client.get(`user:block:${accountId}`);
+}
+
+export async function isCollectionBlocked(accountId?: string | null) {
+  return !!(await getCollectionBlockReason(accountId));
+}
+
+export async function isWebsiteCollectionBlocked(website: Website) {
+  if (!process.env.CLOUD_MODE || !redis.enabled) {
+    return false;
+  }
+
+  const accountId = website.teamId
+    ? (await fetchTeam(website.teamId))?.teamOwnerId
+    : website.userId;
+
+  return isCollectionBlocked(accountId);
 }

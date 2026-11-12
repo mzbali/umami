@@ -1,35 +1,39 @@
-# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-nodejs-with-github-actions
-
 name: Node.js CI
 
-on: [push]
+on: [push, pull_request]
+
+permissions:
+  contents: read
 
 env:
-  DATABASE_TYPE: postgresql
+  APP_SECRET: "test-app-secret-not-for-production"
+  DATABASE_URL: "postgresql://user:pass@localhost:5432/dummy"
   SKIP_DB_CHECK: 1
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        include:
-        - node-version: 18.x
-          db-type: postgresql
-        - node-version: 18.x
-          db-type: mysql
+    if: github.repository == 'umami-software/umami'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v3
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
-      env:
-        DATABASE_TYPE: ${{ matrix.db-type }}
-    - run: npm install --global yarn
-    - run: yarn install --frozen-lockfile
-    - run: yarn build
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+          run_install: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+      - run: pnpm install
+      - run: pnpm lint:i18n
+      - run: pnpm openapi:generate
+      - run: pnpm openapi:check --explicit
+      - run: pnpm check:api:client
+      - run: pnpm build:packages
+      - run: pnpm test
+      - run: pnpm test:packages
+      - run: pnpm build

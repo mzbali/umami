@@ -1,108 +1,170 @@
-import { FixedSizeList } from 'react-window';
-import { useSpring, animated, config } from '@react-spring/web';
-import classNames from 'classnames';
-import Empty from 'components/common/Empty';
-import { formatLongNumber } from 'lib/format';
-import useMessages from 'components/hooks/useMessages';
-import styles from './ListTable.module.css';
-import { ReactNode } from 'react';
+import { Column, Grid, Row, Text } from '@umami/react-zen';
+import { useSpring, useTransform } from 'motion/react';
+import { type ReactNode, useEffect } from 'react';
+import { List, type RowComponentProps } from 'react-window';
+import { AnimatedDiv } from '@/components/common/AnimatedDiv';
+import { Empty } from '@/components/common/Empty';
+import { useMessages, useMobile } from '@/components/hooks';
+import { useReducedMotion } from '@/components/hooks/useReducedMotion';
+import { formatLongNumber } from '@/lib/format';
 
 const ITEM_SIZE = 30;
 
+interface ListData {
+  label: string;
+  count: number;
+  percent: number;
+}
+
 export interface ListTableProps {
-  data?: any[];
+  data?: ListData[];
   title?: string;
   metric?: string;
   className?: string;
-  renderLabel?: (row: any) => ReactNode;
+  renderLabel?: (data: ListData, index: number) => ReactNode;
+  renderChange?: (data: ListData, index: number) => ReactNode;
   animate?: boolean;
   virtualize?: boolean;
   showPercentage?: boolean;
   itemCount?: number;
+  formatCount?: (n: number) => string;
 }
 
 export function ListTable({
   data = [],
   title,
   metric,
-  className,
   renderLabel,
+  renderChange,
   animate = true,
   virtualize = false,
   showPercentage = true,
   itemCount = 10,
+  formatCount,
 }: ListTableProps) {
-  const { formatMessage, labels } = useMessages();
+  const { t, labels } = useMessages();
+  const { isPhone } = useMobile();
+  const reducedMotion = useReducedMotion();
 
-  const getRow = row => {
-    const { x: label, y: value, z: percent } = row;
+  const getRow = (row: ListData, index: number) => {
+    const { label, count, percent } = row;
 
     return (
       <AnimatedRow
-        key={label}
-        label={renderLabel ? renderLabel(row) : label ?? formatMessage(labels.unknown)}
-        value={value}
+        key={`${label}${index}`}
+        label={renderLabel ? renderLabel(row, index) : (label ?? t(labels.unknown))}
+        value={count}
         percent={percent}
-        animate={animate && !virtualize}
+        animate={animate && !virtualize && !reducedMotion}
         showPercentage={showPercentage}
+        change={renderChange ? renderChange(row, index) : null}
+        formatCount={formatCount}
+        isPhone={isPhone}
       />
     );
   };
 
-  const Row = ({ index, style }) => {
-    return <div style={style}>{getRow(data[index])}</div>;
+  const ListTableRow = ({ index, style }: RowComponentProps) => {
+    return <div style={style}>{getRow(data[index], index)}</div>;
   };
 
   return (
-    <div className={classNames(styles.table, className)}>
-      <div className={styles.header}>
-        <div className={styles.title}>{title}</div>
-        <div className={styles.metric}>{metric}</div>
-      </div>
-      <div className={styles.body}>
-        {data?.length === 0 && <Empty className={styles.empty} />}
+    <Column gap>
+      <Grid
+        alignItems="center"
+        justifyContent="space-between"
+        paddingLeft="2"
+        columns={'1fr 100px'}
+      >
+        <Text weight="bold">{title}</Text>
+        <Text weight="bold" align="center">
+          {metric}
+        </Text>
+      </Grid>
+      <Column gap="1">
+        {data?.length === 0 && <Empty />}
         {virtualize && data.length > 0 ? (
-          <FixedSizeList
-            height={itemCount * ITEM_SIZE}
-            itemCount={data.length}
-            itemSize={ITEM_SIZE}
-          >
-            {Row}
-          </FixedSizeList>
+          <List
+            style={{ width: '100%', height: itemCount * ITEM_SIZE }}
+            defaultHeight={itemCount * ITEM_SIZE}
+            rowCount={data.length}
+            rowHeight={ITEM_SIZE}
+            rowComponent={ListTableRow}
+            rowProps={{}}
+          />
         ) : (
-          data.map(row => getRow(row))
+          data.map(getRow)
         )}
-      </div>
-    </div>
+      </Column>
+    </Column>
   );
 }
 
-const AnimatedRow = ({ label, value = 0, percent, animate, showPercentage = true }) => {
-  const props = useSpring({
-    width: percent,
-    y: value,
-    from: { width: 0, y: 0 },
-    config: animate ? config.default : { duration: 0 },
-  });
+const AnimatedRow = ({
+  label,
+  value = 0,
+  percent,
+  change,
+  animate,
+  showPercentage = true,
+  formatCount,
+  isPhone,
+}) => {
+  const y = !Number.isNaN(value) ? value : 0;
+  const ySpring = useSpring(0, { stiffness: 170, damping: 26 });
+  const widthSpring = useSpring(0, { stiffness: 170, damping: 26 });
+  const yText = useTransform(ySpring, n => (formatCount ? formatCount(n) : formatLongNumber(n)));
+  const widthText = useTransform(widthSpring, n => `${n?.toFixed?.(0)}%`);
+
+  useEffect(() => {
+    if (animate) {
+      ySpring.set(y);
+      widthSpring.set(percent);
+    } else {
+      ySpring.jump(y);
+      widthSpring.jump(percent);
+    }
+  }, [y, percent, animate, ySpring, widthSpring]);
 
   return (
-    <div className={styles.row}>
-      <div className={styles.label}>{label}</div>
-      <div className={styles.value}>
-        <animated.div className={styles.value} title={props?.y as any}>
-          {props.y?.to(formatLongNumber)}
-        </animated.div>
-      </div>
+    <Grid
+      columns={showPercentage ? '1fr 50px 50px' : '1fr 100px'}
+      paddingLeft="2"
+      alignItems="center"
+      borderRadius
+      gap
+      hover={{ backgroundColor: 'surface-sunken' }}
+    >
+      <Row alignItems="center">
+        <Text truncate={true} style={{ maxWidth: isPhone ? '200px' : '400px' }}>
+          {label}
+        </Text>
+      </Row>
+      <Row
+        alignItems="center"
+        height="30px"
+        justifyContent={showPercentage ? 'flex-end' : 'center'}
+      >
+        {change}
+        <Text weight="bold">
+          <AnimatedDiv title={String(value)}>
+            {animate ? yText : formatCount ? formatCount(y) : formatLongNumber(y)}
+          </AnimatedDiv>
+        </Text>
+      </Row>
       {showPercentage && (
-        <div className={styles.percent}>
-          <animated.div className={styles.bar} style={{ width: props.width.to(n => `${n}%`) }} />
-          <animated.span className={styles.percentValue}>
-            {props.width.to(n => `${n?.toFixed?.(0)}%`)}
-          </animated.span>
-        </div>
+        <Row
+          alignItems="center"
+          justifyContent="flex-start"
+          position="relative"
+          border="left"
+          borderColor="strong"
+          color="muted"
+          paddingLeft="3"
+        >
+          <AnimatedDiv>{animate ? widthText : `${percent?.toFixed?.(0)}%`}</AnimatedDiv>
+        </Row>
       )}
-    </div>
+    </Grid>
   );
 };
-
-export default ListTable;

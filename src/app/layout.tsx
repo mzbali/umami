@@ -1,36 +1,71 @@
-import { Metadata } from 'next';
-import Providers from './Providers';
-import '@fontsource/inter/400.css';
-import '@fontsource/inter/700.css';
-import '@fontsource/inter/800.css';
-import 'react-basics/dist/styles.css';
-import 'styles/locale.css';
-import 'styles/index.css';
-import 'styles/variables.css';
+import { FlagValues as FlagValuesScript } from 'flags/react';
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import { headers } from 'next/headers';
+import { connection } from 'next/server';
+import { Suspense } from 'react';
+import { getConfig } from '@/lib/config';
+import { getFlagValues } from '@/lib/flags';
+import { getBaseUrl } from '@/lib/get-base-url';
+import { Providers } from './Providers';
+import '@umami/react-zen/styles.full.css';
+import './global.css';
 
-export default function ({ children }) {
+const inter = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-inter',
+});
+
+export default async function ({ children }) {
+  if (process.env.DISABLE_UI) {
+    return (
+      <html>
+        <body></body>
+      </html>
+    );
+  }
+
+  // Force request-time rendering so config reflects runtime env, not build-time env.
+  await connection();
+
+  const config = getConfig();
+  const flags = await getFlagValues();
+
   return (
-    <html lang="en" data-scroll="0">
+    <html lang="en" className={`${inter.className} ${inter.variable}`}>
       <head>
         <link rel="icon" href="/favicon.ico" />
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
         <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
-        <link rel="manifest" href="/site.webmanifest" />
+        <link rel="manifest" href="/site.webmanifest" crossOrigin="use-credentials" />
         <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5" />
         <meta name="msapplication-TileColor" content="#da532c" />
         <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
         <meta name="theme-color" content="#2f2f2f" media="(prefers-color-scheme: dark)" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="robots" content="noindex,nofollow" />
       </head>
       <body>
-        <Providers>{children}</Providers>
+        <Suspense>
+          <Providers config={config} flags={flags}>
+            {children}
+          </Providers>
+        </Suspense>
+        <FlagValuesScript values={flags} />
       </body>
     </html>
   );
 }
 
-export const metadata: Metadata = {
-  title: 'umami',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const headerStore = await headers();
+
+  return {
+    metadataBase: getBaseUrl(headerStore),
+    title: {
+      template: '%s | Umami',
+      default: 'Umami',
+    },
+  };
+}

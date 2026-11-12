@@ -1,66 +1,81 @@
-'use client';
 import {
+  Column,
   Form,
-  FormRow,
-  FormInput,
   FormButtons,
-  TextField,
-  PasswordField,
-  SubmitButton,
+  FormField,
+  FormSubmitButton,
+  Heading,
   Icon,
-} from 'react-basics';
+  PasswordField,
+  TextField,
+} from '@umami/react-zen';
 import { useRouter } from 'next/navigation';
-import useApi from 'components/hooks/useApi';
-import { setUser } from 'store/app';
-import { setClientAuthToken } from 'lib/client';
-import useMessages from 'components/hooks/useMessages';
-import Logo from 'assets/logo.svg';
-import styles from './LoginForm.module.css';
+import { useMessages, useUpdateQuery } from '@/components/hooks';
+import { Logo } from '@/components/svg';
+import { setClientAuthToken } from '@/lib/client';
+import { consumeReturnUrl } from '@/lib/return-url';
+import { setUser } from '@/store/app';
 
 export function LoginForm() {
-  const { formatMessage, labels, getMessage } = useMessages();
+  const { t, labels, getErrorMessage } = useMessages();
   const router = useRouter();
-  const { post, useMutation } = useApi();
-  const { mutate, error, isPending } = useMutation({
-    mutationFn: (data: any) => post('/auth/login', data),
-  });
+  const { mutateAsync, error } = useUpdateQuery('/auth/login');
 
-  const handleSubmit = async data => {
-    mutate(data, {
-      onSuccess: async ({ token, user }) => {
-        setClientAuthToken(token);
-        setUser(user);
-
-        await router.push('/dashboard');
+  const handleSubmit = async (data: any) => {
+    await mutateAsync(data, {
+      onSuccess: async (response: any) => {
+        if (response.requiresTwoFactor) {
+          sessionStorage.setItem('umami.partial-token', response.partialToken);
+          router.push('/login/two-factor');
+          return;
+        }
+        setClientAuthToken(response.token);
+        setUser(response.user);
+        router.push(consumeReturnUrl() ?? '/');
       },
     });
   };
 
   return (
-    <div className={styles.login}>
-      <Icon className={styles.icon} size="xl">
+    <Column justifyContent="center" alignItems="center" gap="6">
+      <Icon size="lg">
         <Logo />
       </Icon>
-      <div className={styles.title}>umami</div>
-      <Form className={styles.form} onSubmit={handleSubmit} error={getMessage(error)}>
-        <FormRow label={formatMessage(labels.username)}>
-          <FormInput name="username" rules={{ required: formatMessage(labels.required) }}>
-            <TextField autoComplete="off" />
-          </FormInput>
-        </FormRow>
-        <FormRow label={formatMessage(labels.password)}>
-          <FormInput name="password" rules={{ required: formatMessage(labels.required) }}>
-            <PasswordField />
-          </FormInput>
-        </FormRow>
+      <Heading>umami</Heading>
+      <Form
+        onSubmit={handleSubmit}
+        error={getErrorMessage(error)}
+        defaultValues={{ username: '', password: '' }}
+        style={{ minWidth: 300 }}
+      >
+        <FormField
+          label={t(labels.username)}
+          data-test="input-username"
+          name="username"
+          rules={{ required: t(labels.required) }}
+        >
+          <TextField autoComplete="username" autoFocus />
+        </FormField>
+
+        <FormField
+          label={t(labels.password)}
+          data-test="input-password"
+          name="password"
+          rules={{ required: t(labels.required) }}
+        >
+          <PasswordField autoComplete="current-password" />
+        </FormField>
         <FormButtons>
-          <SubmitButton className={styles.button} variant="primary" disabled={isPending}>
-            {formatMessage(labels.login)}
-          </SubmitButton>
+          <FormSubmitButton
+            data-test="button-submit"
+            variant="primary"
+            style={{ flex: 1 }}
+            isDisabled={false}
+          >
+            {t(labels.login)}
+          </FormSubmitButton>
         </FormButtons>
       </Form>
-    </div>
+    </Column>
   );
 }
-
-export default LoginForm;

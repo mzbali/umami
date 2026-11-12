@@ -1,226 +1,233 @@
-import { Report } from '@prisma/client';
 import debug from 'debug';
-import redis from '@umami/redis-client';
-import { PERMISSIONS, ROLE_PERMISSIONS, SHARE_TOKEN_HEADER } from 'lib/constants';
-import { secret } from 'lib/crypto';
-import { createSecureToken, ensureArray, getRandomChars, parseToken } from 'next-basics';
-import { findTeamWebsiteByUserId, getTeamUser, getTeamWebsite } from 'queries';
-import { loadWebsite } from './load';
-import { Auth } from './types';
-import { NextApiRequest } from 'next';
+import {
+  API_KEY_LAST_USED_INTERVAL,
+  hashApiKey,
+  isApiKey,
+  isApiKeyBlockedPath,
+  isApiKeyEnabled,
+} from '@/lib/api-key';
+import {
+  AUTH_SESSION_TTL,
+  PARTIAL_AUTH_TOKEN_TYPE,
+  ROLE_PERMISSIONS,
+  ROLES,
+  SHARE_CONTEXT_HEADER,
+  SHARE_TOKEN_HEADER,
+  SHARE_TOKEN_TYPE,
+} from '@/lib/constants';
+import { createAuthKey, hash, secret } from '@/lib/crypto';
+import { createSecureToken, parseSecureToken, parseToken } from '@/lib/jwt';
+import { hasDefaultPassword } from '@/lib/password';
+import prisma from '@/lib/prisma';
+import redis from '@/lib/redis';
+import { ensureArray } from '@/lib/utils';
+import { getApiKeyByHash, updateApiKeyLastUsed } from '@/queries/prisma/apiKey';
+import { getShare } from '@/queries/prisma/share';
+import { getUser } from '@/queries/prisma/user';
 
 const log = debug('umami:auth');
-const cloudMode = process.env.CLOUD_MODE;
 
-export async function saveAuth(data: any, expire = 0) {
-  const authKey = `auth:${getRandomChars(32)}`;
+export function getBearerToken(request: Request) {
+  const auth = request.headers.get('authorization');
 
-  await redis.client.set(authKey, data);
+  return auth?.split(' ')[1];
+}
 
-  if (expire) {
-    await redis.client.expire(authKey, expire);
+export async function checkApiKeyAuth(request: Request, token: string) {
+  const { pathname } = new URL(request.url);
+
+  if (isApiKeyBlockedPath(pathname)) {
+    log('API key not allowed for path', pathname);
+    return null;
+  }
+
+  const apiKey = await getApiKeyByHash(hashApiKey(token));
+
+  if (!apiKey) {
+    log('API key not found');
+    return null;
+  }
+
+  const user: any = await getUser(apiKey.userId);
+
+  if (!user?.id) {
+    log('API key user not found');
+    return null;
+  }
+
+  const lastUsedAt = apiKey.lastUsedAt?.getTime() ?? 0;
+
+  if (Date.now() - lastUsedAt > API_KEY_LAST_USED_INTERVAL) {
+    updateApiKeyLastUsed(apiKey.id).catch(e => log(e));
+  }
+
+  delete user.password;
+  user.isAdmin = user.role === ROLES.admin;
+
+  return {
+    token,
+    user,
+    authType: 'api-key' as const,
+    apiKey: { id: apiKey.id, name: apiKey.name },
+  };
+}
+
+export async function checkAuth(request: Request) {
+  const token = getBearerToken(request);
+
+  if (isApiKeyEnabled() && isApiKey(token)) {
+    return checkApiKeyAuth(request, token);
+  }
+
+  const payload = parseSecureToken(token, secret());
+
+  // The partial token issued after the password step of a 2FA login only proves
+  // knowledge of the password. It must never be accepted as a session; it is
+  // only valid for completing the challenge at /api/2fa/verify.
+  if (payload?.type === PARTIAL_AUTH_TOKEN_TYPE) {
+    log('Partial auth token rejected');
+    return null;
+  }
+
+  const shareToken = await parseShareToken(request);
+
+  let user = null;
+  let twoFactorSetup = false;
+  const { userId, authKey } = payload || {};
+
+  if (userId) {
+    user = await getUser(userId, { includePassword: true });
+    twoFactorSetup = !!payload.twoFactorSetup;
+
+    // Reject tokens issued before the current password.
+    // Allow legacy stateless tokens that were minted without a password fingerprint.
+    if (user && payload.pwd && hash(user.password) !== payload.pwd) {
+      user = null;
+    }
+  } else if (redis.enabled && authKey) {
+    const key = await redis.client.get(authKey);
+
+    if (key?.userId) {
+      user = await getUser(key.userId, { includePassword: true });
+      twoFactorSetup = !!key.twoFactorSetup;
+
+      // Only enforce password-change invalidation for sessions that include a password fingerprint.
+      if (user && key.pwd && hash(user.password) !== key.pwd) {
+        user = null;
+      }
+
+      // Keep an in-use session alive rather than expiring it a fixed time after
+      // login, reusing the window it was created with. Sessions stored before
+      // this was recorded are left alone: their intended lifetime is unknown,
+      // and defaulting would extend the shorter ones past it.
+      if (user && key.ttl) {
+        await redis.client.expire(authKey, key.ttl).catch(e => log(e));
+      }
+    }
+  }
+
+  // A session issued while 2FA was required but not set up stays restricted until enrollment
+  // completes; after that the same token becomes a full session.
+  let twoFactorSetupPending = false;
+
+  if (user && twoFactorSetup) {
+    const twoFactor = await prisma.client.twoFactorAuth.findUnique({ where: { userId: user.id } });
+    twoFactorSetupPending = !twoFactor?.isEnabled;
+  }
+
+  log({
+    hasToken: !!token,
+    hasPayload: !!payload,
+    hasAuthKey: !!authKey,
+    hasShareToken: !!shareToken,
+    userId: user?.id,
+  });
+
+  if (!user?.id && !shareToken) {
+    log('User not authorized');
+    return null;
+  }
+
+  if (!user?.id && shareToken) {
+    const shareContext = request.headers.get(SHARE_CONTEXT_HEADER);
+    if (!shareContext) {
+      log('Share token used outside share context');
+      return null;
+    }
+  }
+
+  const passwordChangeRequired = hasDefaultPassword(user);
+
+  if (user) {
+    delete user.password;
+    user.isAdmin = user.role === ROLES.admin;
+  }
+
+  return {
+    token,
+    authKey,
+    shareToken,
+    user,
+    authType: user ? ('session' as const) : ('share' as const),
+    twoFactorSetupPending,
+    passwordChangeRequired,
+  };
+}
+
+export async function saveAuth(data: any, expire = AUTH_SESSION_TTL) {
+  const authKey = `auth:${createAuthKey()}`;
+
+  if (redis.enabled) {
+    // The TTL must be passed to set(): the client falls back to its own short
+    // DEFAULT_TTL when called without one, which would expire the session.
+    // It is stored alongside the session so refreshes can reuse the same window.
+    await redis.client.set(authKey, { ...data, ttl: expire }, expire);
   }
 
   return createSecureToken({ authKey }, secret());
 }
 
-export function getAuthToken(req: NextApiRequest) {
-  try {
-    return req.headers.authorization.split(' ')[1];
-  } catch {
-    return null;
-  }
-}
+export async function createSessionToken(user: { id: string; role: string; password: string }) {
+  // Bind token to password hash so a password change invalidates old tokens.
+  const session = { userId: user.id, role: user.role, pwd: hash(user.password) };
 
-export function parseShareToken(req: Request) {
-  try {
-    return parseToken(req.headers[SHARE_TOKEN_HEADER], secret());
-  } catch (e) {
-    log(e);
-    return null;
-  }
-}
-
-export async function canViewWebsite({ user, shareToken }: Auth, websiteId: string) {
-  if (user?.isAdmin) {
-    return true;
-  }
-
-  if (shareToken?.websiteId === websiteId) {
-    return true;
-  }
-
-  const website = await loadWebsite(websiteId);
-
-  if (user.id === website?.userId) {
-    return true;
-  }
-
-  return !!(await findTeamWebsiteByUserId(websiteId, user.id));
-}
-
-export async function canViewAllWebsites({ user }: Auth) {
-  return user.isAdmin;
-}
-
-export async function canCreateWebsite({ user, grant }: Auth) {
-  if (cloudMode) {
-    return !!grant?.find(a => a === PERMISSIONS.websiteCreate);
-  }
-
-  if (user.isAdmin) {
-    return true;
-  }
-
-  return hasPermission(user.role, PERMISSIONS.websiteCreate);
-}
-
-export async function canUpdateWebsite({ user }: Auth, websiteId: string) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  const website = await loadWebsite(websiteId);
-
-  return user.id === website?.userId;
-}
-
-export async function canDeleteWebsite({ user }: Auth, websiteId: string) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  const website = await loadWebsite(websiteId);
-
-  return user.id === website?.userId;
-}
-
-export async function canViewReport(auth: Auth, report: Report) {
-  if (auth.user.isAdmin) {
-    return true;
-  }
-
-  if (auth.user.id == report.userId) {
-    return true;
-  }
-
-  return !!(await canViewWebsite(auth, report.websiteId));
-}
-
-export async function canUpdateReport({ user }: Auth, report: Report) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  return user.id == report.userId;
-}
-
-export async function canDeleteReport(auth: Auth, report: Report) {
-  return canUpdateReport(auth, report);
-}
-
-export async function canCreateTeam({ user, grant }: Auth) {
-  if (cloudMode) {
-    return !!grant?.find(a => a === PERMISSIONS.teamCreate);
-  }
-
-  if (user.isAdmin) {
-    return true;
-  }
-
-  return !!user;
-}
-
-export async function canViewTeam({ user }: Auth, teamId: string) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  return getTeamUser(teamId, user.id);
-}
-
-export async function canUpdateTeam({ user }: Auth, teamId: string) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  const teamUser = await getTeamUser(teamId, user.id);
-
-  return teamUser && hasPermission(teamUser.role, PERMISSIONS.teamUpdate);
-}
-
-export async function canDeleteTeam({ user }: Auth, teamId: string) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  const teamUser = await getTeamUser(teamId, user.id);
-
-  return teamUser && hasPermission(teamUser.role, PERMISSIONS.teamDelete);
-}
-
-export async function canDeleteTeamUser({ user }: Auth, teamId: string, removeUserId: string) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  if (removeUserId === user.id) {
-    return true;
-  }
-
-  const teamUser = await getTeamUser(teamId, user.id);
-
-  return teamUser && hasPermission(teamUser.role, PERMISSIONS.teamUpdate);
-}
-
-export async function canDeleteTeamWebsite({ user }: Auth, teamId: string, websiteId: string) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  const teamWebsite = await getTeamWebsite(teamId, websiteId);
-
-  if (teamWebsite?.website?.userId === user.id) {
-    return true;
-  }
-
-  if (teamWebsite) {
-    const teamUser = await getTeamUser(teamWebsite.teamId, user.id);
-
-    return hasPermission(teamUser.role, PERMISSIONS.teamUpdate);
-  }
-
-  return false;
-}
-
-export async function canCreateUser({ user }: Auth) {
-  return user.isAdmin;
-}
-
-export async function canViewUser({ user }: Auth, viewedUserId: string) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  return user.id === viewedUserId;
-}
-
-export async function canViewUsers({ user }: Auth) {
-  return user.isAdmin;
-}
-
-export async function canUpdateUser({ user }: Auth, viewedUserId: string) {
-  if (user.isAdmin) {
-    return true;
-  }
-
-  return user.id === viewedUserId;
-}
-
-export async function canDeleteUser({ user }: Auth) {
-  return user.isAdmin;
+  return redis.enabled ? saveAuth(session) : createSecureToken(session, secret());
 }
 
 export async function hasPermission(role: string, permission: string | string[]) {
   return ensureArray(permission).some(e => ROLE_PERMISSIONS[role]?.includes(e));
+}
+
+export async function parseShareToken(request: Request) {
+  try {
+    const token: any = parseToken(request.headers.get(SHARE_TOKEN_HEADER), secret());
+
+    // Only accept tokens explicitly minted as share tokens. This prevents other
+    // tokens signed with the same secret (e.g. the cache token from /api/send)
+    // from being replayed as share tokens to gain analytics access.
+    if (token?.type !== SHARE_TOKEN_TYPE) {
+      return null;
+    }
+
+    // Share tokens are stateless and never expire, so the share they were minted
+    // from is re-checked on every request. Deleting a share revokes its tokens.
+    if (!token.shareId) {
+      return null;
+    }
+
+    const share = await getShare(token.shareId);
+    const entityId = token.boardId ?? token.websiteId;
+
+    if (!share || share.shareType !== token.shareType || share.entityId !== entityId) {
+      log('Share token rejected: share not found');
+      return null;
+    }
+
+    // Use the current parameters rather than the ones captured at mint time, so
+    // turning a section off takes effect for tokens that are already issued.
+    return { ...token, parameters: share.parameters };
+  } catch (e) {
+    log(e);
+    return null;
+  }
 }

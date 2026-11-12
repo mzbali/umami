@@ -1,62 +1,74 @@
-import { Icon, Button, PopupTrigger, Popup, Menu, Item, Text } from 'react-basics';
-import { useRouter } from 'next/navigation';
-import Icons from 'components/icons';
-import useMessages from 'components/hooks/useMessages';
-import useUser from 'components/hooks/useUser';
-import useLocale from 'components/hooks/useLocale';
-import { CURRENT_VERSION } from 'lib/constants';
-import styles from './ProfileButton.module.css';
+import {
+  Button,
+  Icon,
+  Menu,
+  MenuItem,
+  MenuSection,
+  MenuSeparator,
+  MenuTrigger,
+  Popover,
+  Row,
+  Text,
+} from '@umami/react-zen';
+import { Fragment } from 'react';
+import { useLoginQuery, useMessages, useNavigation } from '@/components/hooks';
+import { LockKeyhole, LogOut, UserCircle } from '@/components/icons';
 
 export function ProfileButton() {
-  const { formatMessage, labels } = useMessages();
-  const { user } = useUser();
-  const router = useRouter();
-  const { dir } = useLocale();
-  const cloudMode = Boolean(process.env.cloudMode);
+  const { t, labels } = useMessages();
+  const { user } = useLoginQuery();
+  const { renderUrl, router } = useNavigation();
 
-  const handleSelect = key => {
-    if (key === 'profile') {
-      router.push('/settings/profile');
-    }
-    if (key === 'logout') {
-      router.push('/logout');
-    }
-  };
+  const items = [
+    {
+      id: 'settings',
+      label: t(labels.profile),
+      path: renderUrl('/settings/profile'),
+      icon: <UserCircle />,
+    },
+    user.isAdmin &&
+      !process.env.cloudMode && {
+        id: 'admin',
+        label: t(labels.admin),
+        path: '/admin',
+        icon: <LockKeyhole />,
+      },
+    {
+      id: 'logout',
+      label: t(labels.logout),
+      path: '/logout',
+      icon: <LogOut />,
+      separator: true,
+    },
+  ].filter(n => n);
 
   return (
-    <PopupTrigger>
-      <Button variant="quiet">
+    <MenuTrigger>
+      <Button data-test="button-profile" variant="quiet">
         <Icon>
-          <Icons.Profile />
-        </Icon>
-        <Icon size="sm">
-          <Icons.ChevronDown />
+          <UserCircle />
         </Icon>
       </Button>
-      <Popup position="bottom" alignment={dir === 'rtl' ? 'start' : 'end'}>
-        <Menu variant="popup" onSelect={handleSelect} className={styles.menu}>
-          <Item key="user" className={styles.item}>
-            <Text>{user.username}</Text>
-          </Item>
-          <Item key="profile" className={styles.item} divider={true}>
-            <Icon>
-              <Icons.User />
-            </Icon>
-            <Text>{formatMessage(labels.profile)}</Text>
-          </Item>
-          {!cloudMode && (
-            <Item key="logout" className={styles.item}>
-              <Icon>
-                <Icons.Logout />
-              </Icon>
-              <Text>{formatMessage(labels.logout)}</Text>
-            </Item>
-          )}
-          <div className={styles.version}>{`v${CURRENT_VERSION}`}</div>
+      <Popover side="bottom" align="end">
+        <Menu>
+          <MenuSection title={user.username}>
+            <MenuSeparator />
+            {items.map(({ id, path, label, icon, separator }) => {
+              return (
+                <Fragment key={id}>
+                  {separator && <MenuSeparator />}
+                  <MenuItem id={id} onAction={() => router.push(path)}>
+                    <Row alignItems="center" gap>
+                      <Icon>{icon}</Icon>
+                      <Text>{label}</Text>
+                    </Row>
+                  </MenuItem>
+                </Fragment>
+              );
+            })}
+          </MenuSection>
         </Menu>
-      </Popup>
-    </PopupTrigger>
+      </Popover>
+    </MenuTrigger>
   );
 }
-
-export default ProfileButton;

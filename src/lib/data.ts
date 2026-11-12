@@ -1,75 +1,126 @@
-import { isValid, parseISO } from 'date-fns';
-import { DATA_TYPE } from './constants';
-import { DynamicDataType } from './types';
+import { DATA_TYPE, DATETIME_REGEX, FIELD_LENGTH } from './constants';
+import { truncateString } from './format';
+import type { DynamicDataType } from './types';
 
-export function flattenJSON(
-  eventData: { [key: string]: any },
-  keyValues: { key: string; value: any; dynamicDataType: DynamicDataType }[] = [],
-  parentKey = '',
-): { key: string; value: any; dynamicDataType: DynamicDataType }[] {
-  return Object.keys(eventData).reduce(
-    (acc, key) => {
-      const value = eventData[key];
-      const type = typeof eventData[key];
+export interface KeyValueData {
+  key: string;
+  value: any;
+  dataType: DynamicDataType;
+}
 
-      // nested object
-      if (value && type === 'object' && !Array.isArray(value) && !isValid(value)) {
-        flattenJSON(value, acc.keyValues, getKeyName(key, parentKey));
-      } else {
-        createKey(getKeyName(key, parentKey), value, acc);
+export function flattenJSON(eventData: Record<string, any>): KeyValueData[] {
+  function flatten(obj: Record<string, any>, parentKey: string): KeyValueData[] {
+    return Object.entries(obj).flatMap(([key, value]) => {
+      const fullKey = parentKey ? `${parentKey}.${key}` : key;
+
+      if (value && typeof value === 'object' && !Array.isArray(value) && !isValidDateValue(value)) {
+        return flatten(value, fullKey);
       }
 
-      return acc;
-    },
-    { keyValues, parentKey },
-  ).keyValues;
+      return [createKeyValue(fullKey, value)];
+    });
+  }
+
+  return flatten(eventData, '');
+}
+
+export function isValidDateValue(value: string) {
+  // The regex alone accepts impossible dates like month 13, which then fail on write.
+  return (
+    typeof value === 'string' && DATETIME_REGEX.test(value) && !Number.isNaN(Date.parse(value))
+  );
 }
 
 export function getDataType(value: any): string {
   let type: string = typeof value;
 
-  if ((type === 'string' && isValid(value)) || isValid(parseISO(value))) {
+  if (isValidDateValue(value)) {
     type = 'date';
   }
 
   return type;
 }
 
-function createKey(key, value, acc: { keyValues: any[]; parentKey: string }) {
-  const type = getDataType(value);
+export function getStringValue(value: string, dataType: number) {
+  if (dataType === DATA_TYPE.number) {
+    return parseFloat(value).toFixed(4);
+  }
 
-  let dynamicDataType = null;
+  if (dataType === DATA_TYPE.date) {
+    return new Date(value).toISOString();
+  }
+
+  return value;
+}
+
+export function getStoredStringValue(value: string, dataType: number) {
+  const stringValue = getStringValue(value, dataType);
+
+  if (dataType === DATA_TYPE.array && stringValue.length > FIELD_LENGTH.stringValue) {
+    return null;
+  }
+
+  return truncateString(stringValue, FIELD_LENGTH.stringValue);
+}
+
+export function createKeyValue(key: string, value: any): KeyValueData {
+  const type = getDataType(value);
+  let dataType: DynamicDataType;
+  let processedValue = value;
 
   switch (type) {
     case 'number':
-      dynamicDataType = DATA_TYPE.number;
+      dataType = DATA_TYPE.number;
       break;
     case 'string':
-      dynamicDataType = DATA_TYPE.string;
+      dataType = DATA_TYPE.string;
       break;
     case 'boolean':
-      dynamicDataType = DATA_TYPE.boolean;
-      value = value ? 'true' : 'false';
+      dataType = DATA_TYPE.boolean;
+      processedValue = value ? 'true' : 'false';
       break;
     case 'date':
-      dynamicDataType = DATA_TYPE.date;
+      dataType = DATA_TYPE.date;
       break;
     case 'object':
-      dynamicDataType = DATA_TYPE.array;
-      value = JSON.stringify(value);
+      dataType = DATA_TYPE.array;
+      processedValue = JSON.stringify(value);
       break;
     default:
-      dynamicDataType = DATA_TYPE.string;
+      dataType = DATA_TYPE.string;
       break;
   }
 
-  acc.keyValues.push({ key, value, dynamicDataType });
+  return { key, value: processedValue, dataType };
 }
 
-function getKeyName(key, parentKey) {
-  if (!parentKey) {
-    return key;
+export function objectToArray(obj: object) {
+  return Object.keys(obj).map(key => obj[key]);
+}
+
+export interface StoredDataValue {
+  dataType: number;
+  stringValue?: string | null;
+  numberValue?: number | string | null;
+  dateValue?: string | Date | null;
+}
+
+// string_value is not guaranteed for number/date rows (e.g. rows written by external integrations),
+// so prefer the typed column and fall back to string_value.
+export function getDisplayValue({
+  dataType,
+  stringValue,
+  numberValue,
+  dateValue,
+}: StoredDataValue) {
+  if (dataType === DATA_TYPE.number && numberValue !== null && numberValue !== undefined) {
+    const n = Number(numberValue);
+    return Number.isNaN(n) ? String(numberValue) : String(n);
   }
 
-  return `${parentKey}.${key}`;
+  if (dataType === DATA_TYPE.date && !stringValue && dateValue) {
+    return new Date(dateValue).toISOString();
+  }
+
+  return stringValue ?? '';
 }

@@ -1,10 +1,10 @@
-import Dashboard from 'app/(main)/dashboard/Dashboard';
-import { Metadata } from 'next';
+import type { Metadata } from 'next';
+import { DashboardViewPage } from './DashboardViewPage';
 
-export default function () {
-  return <Dashboard />;
+export default async function () {
+  return <DashboardViewPage />;
 }
 
 export const metadata: Metadata = {
-  title: 'Dashboard | umami',
+  title: 'Dashboard',
 };

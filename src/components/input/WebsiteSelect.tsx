@@ -1,39 +1,116 @@
-import { Dropdown, Item } from 'react-basics';
-import useApi from 'components/hooks/useApi';
-import useMessages from 'components/hooks/useMessages';
-import styles from './WebsiteSelect.module.css';
+import { Icon, ListItem, Row, Select, type SelectProps, Text } from '@umami/react-zen';
+import { useEffect, useState } from 'react';
+import { Empty } from '@/components/common/Empty';
+import {
+  useLoginQuery,
+  useMessages,
+  useUserWebsitesQuery,
+  useWebsiteQuery,
+} from '@/components/hooks';
+import { Globe } from '@/components/icons';
 
 export function WebsiteSelect({
   websiteId,
-  onSelect,
+  teamId,
+  onChange,
+  includeTeams,
+  isCollapsed,
+  buttonProps,
+  listProps,
+  ...props
 }: {
-  websiteId: string;
-  onSelect?: (key: any) => void;
-}) {
-  const { formatMessage, labels } = useMessages();
-  const { get, useQuery } = useApi();
-  const { data } = useQuery({
-    queryKey: ['websites:me'],
-    queryFn: () => get('/me/websites', { pageSize: 100 }),
-  });
+  websiteId?: string;
+  teamId?: string;
+  includeTeams?: boolean;
+  isCollapsed?: boolean;
+} & SelectProps) {
+  const { t, labels, messages } = useMessages();
+  const { data: website } = useWebsiteQuery(websiteId);
+  const [name, setName] = useState<string>(website?.name);
+  const [search, setSearch] = useState('');
+  const { user } = useLoginQuery();
+  const { data, isLoading } = useUserWebsitesQuery(
+    { userId: user?.id, teamId },
+    { search, pageSize: 100, includeTeams: includeTeams || undefined },
+  );
+  const listItems: { id: string; name: string }[] = data?.data || [];
 
-  const renderValue = value => {
-    return data?.data?.find(({ id }) => id === value)?.name;
+  useEffect(() => {
+    setName(website?.name);
+  }, [website?.name]);
+
+  const handleSearch = (value: string) => {
+    setSearch(value);
+  };
+
+  const handleOpenChange = () => {
+    setSearch('');
+  };
+
+  const handleChange = (id: string) => {
+    setName(listItems.find(item => item.id === id)?.name);
+    onChange(id);
+  };
+
+  const renderValue = () => {
+    if (isCollapsed) {
+      return '';
+    }
+
+    const value = name || props.placeholder || t(labels.selectWebsite);
+
+    return (
+      <Row alignItems="center" gap>
+        <Icon>
+          <Globe />
+        </Icon>
+        <Text truncate color={name ? undefined : 'muted'}>
+          {value}
+        </Text>
+      </Row>
+    );
   };
 
   return (
-    <Dropdown
-      menuProps={{ className: styles.dropdown }}
-      items={data?.data}
-      value={websiteId}
+    <Select
+      {...props}
+      value={websiteId ?? null}
+      isLoading={isLoading}
+      allowSearch={true}
+      onSearch={handleSearch}
+      onChange={value => handleChange(value as string)}
+      onOpenChange={handleOpenChange}
       renderValue={renderValue}
-      onChange={onSelect}
-      alignment="end"
-      placeholder={formatMessage(labels.selectWebsite)}
+      buttonProps={{
+        ...buttonProps,
+        className: [
+          'border-transparent bg-transparent shadow-none hover:border-transparent hover:bg-interactive active:bg-interactive-hover',
+          buttonProps?.className,
+        ]
+          .filter(Boolean)
+          .join(' '),
+        style: {
+          gap: 0,
+          justifyContent: isCollapsed ? 'start' : undefined,
+          ...buttonProps?.style,
+        },
+      }}
+      maxHeight={480}
+      listProps={{
+        ...listProps,
+        renderEmptyState:
+          listProps?.renderEmptyState || (() => <Empty message={t(messages.noResultsFound)} />),
+        style: {
+          width: 280,
+          ...listProps?.style,
+        },
+      }}
     >
-      {({ id, name }) => <Item key={id}>{name}</Item>}
-    </Dropdown>
+      {listItems.map(({ id, name }) => (
+        <ListItem key={id} id={id}>
+          {name}
+        </ListItem>
+      ))}
+    </Select>
   );
 }
-
-export default WebsiteSelect;

@@ -1,47 +1,50 @@
-import { useMemo } from 'react';
-import { Loading } from 'react-basics';
 import { colord } from 'colord';
-import BarChart from './BarChart';
-import { getDateArray } from 'lib/date';
-import { useApi, useLocale, useDateRange, useTimezone, useNavigation } from 'components/hooks';
-import { EVENT_COLORS } from 'lib/constants';
-import { renderDateLabels, renderStatusTooltipPopup } from 'lib/charts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { BarChart, type BarChartProps } from '@/components/charts/BarChart';
+import { LoadingPanel } from '@/components/common/LoadingPanel';
+import {
+  useBarDrillDown,
+  useDateRange,
+  useLocale,
+  useTimezone,
+  useWebsiteEventsSeriesQuery,
+} from '@/components/hooks';
+import { renderDateLabels } from '@/lib/charts';
+import { hex6 } from '@/lib/colors';
+import { CHART_COLORS } from '@/lib/constants';
+import { generateTimeSeries } from '@/lib/date';
 
-export interface EventsChartProps {
+export interface EventsChartProps extends BarChartProps {
   websiteId: string;
-  className?: string;
-  token?: string;
+  focusLabel?: string;
+  limit?: number;
+  allowBarDrill?: boolean;
 }
 
-export function EventsChart({ websiteId, className, token }: EventsChartProps) {
-  const { get, useQuery } = useApi();
-  const [{ startDate, endDate, unit, modified }] = useDateRange(websiteId);
-  const { locale } = useLocale();
-  const [timezone] = useTimezone();
+export function EventsChart({ websiteId, focusLabel, limit, allowBarDrill }: EventsChartProps) {
+  const { timezone } = useTimezone();
   const {
-    query: { url, event },
-  } = useNavigation();
+    dateRange: { startDate, endDate, unit },
+  } = useDateRange({ timezone: timezone });
+  const handleBarClick = useBarDrillDown(unit, allowBarDrill);
+  const { locale, dateLocale } = useLocale();
+  const { data, isLoading, error } = useWebsiteEventsSeriesQuery(websiteId, { limit });
+  const [label, setLabel] = useState<string>(focusLabel);
+  const [hiddenLabels, setHiddenLabels] = useState<Set<string>>(() => new Set());
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['events', websiteId, modified, event],
-    queryFn: () =>
-      get(`/websites/${websiteId}/events`, {
-        startAt: +startDate,
-        endAt: +endDate,
-        unit,
-        timezone,
-        url,
-        event,
-        token,
-      }),
-    enabled: !!websiteId,
-  });
+  const handleLegendClick = useCallback((legendLabel: string, willBeHidden: boolean) => {
+    setHiddenLabels(prev => {
+      const next = new Set(prev);
+      if (willBeHidden) next.add(legendLabel);
+      else next.delete(legendLabel);
+      return next;
+    });
+  }, []);
 
-  const datasets = useMemo(() => {
-    if (!data) return [];
-    if (isLoading) return data;
+  const chartData: any = useMemo(() => {
+    if (!data) return;
 
-    const map = data.reduce((obj, { x, t, y }) => {
+    const map = (data as any[]).reduce((obj, { x, t, y }) => {
       if (!obj[x]) {
         obj[x] = [];
       }
@@ -51,38 +54,78 @@ export function EventsChart({ websiteId, className, token }: EventsChartProps) {
       return obj;
     }, {});
 
-    Object.keys(map).forEach(key => {
-      map[key] = getDateArray(map[key], startDate, endDate, unit);
-    });
-
-    return Object.keys(map).map((key, index) => {
-      const color = colord(EVENT_COLORS[index % EVENT_COLORS.length]);
+    if (!map || Object.keys(map).length === 0) {
       return {
-        label: key,
-        data: map[key],
-        lineTension: 0,
-        backgroundColor: color.alpha(0.6).toRgbString(),
-        borderColor: color.alpha(0.7).toRgbString(),
-        borderWidth: 1,
+        datasets: [
+          {
+            data: generateTimeSeries([], startDate, endDate, unit, dateLocale),
+            lineTension: 0,
+            borderWidth: 1,
+          },
+        ],
       };
-    });
-  }, [data, isLoading, startDate, endDate, unit]);
+    } else {
+      const colorByKey: Record<string, string> = {};
+      const used = new Set<string>();
+      const hashOf = Object.fromEntries(
+        Object.keys(map).map(key => [key, parseInt(hex6(key), 16)]),
+      );
+      const orderedKeys = [...Object.keys(map)].sort((a, b) => hashOf[a] - hashOf[b]);
+      for (const key of orderedKeys) {
+        const start = (hashOf[key] >>> 4) % CHART_COLORS.length;
+        let chosen = CHART_COLORS[start];
+        for (let i = 0; i < CHART_COLORS.length; i++) {
+          const candidate = CHART_COLORS[(start + i) % CHART_COLORS.length];
+          if (!used.has(candidate)) {
+            chosen = candidate;
+            break;
+          }
+        }
+        used.add(chosen);
+        colorByKey[key] = chosen;
+      }
 
-  if (isLoading) {
-    return <Loading icon="dots" />;
-  }
+      return {
+        datasets: Object.keys(map).map(key => {
+          const color = colord(colorByKey[key]);
+          return {
+            label: key,
+            data: generateTimeSeries(map[key], startDate, endDate, unit, dateLocale),
+            lineTension: 0,
+            backgroundColor: color.alpha(0.6).toRgbString(),
+            borderColor: color.alpha(0.7).toRgbString(),
+            borderWidth: 1,
+          };
+        }),
+        focusLabel,
+      };
+    }
+  }, [data, startDate, endDate, unit, focusLabel]);
+
+  useEffect(() => {
+    if (label !== focusLabel) {
+      setLabel(focusLabel);
+    }
+  }, [focusLabel]);
+
+  const renderXLabel = useCallback(renderDateLabels(unit, locale), [unit, locale]);
 
   return (
-    <BarChart
-      className={className}
-      datasets={datasets}
-      unit={unit}
-      loading={isLoading}
-      stacked
-      renderXLabel={renderDateLabels(unit, locale)}
-      renderTooltipPopup={renderStatusTooltipPopup(unit, locale)}
-    />
+    <LoadingPanel isLoading={isLoading} error={error} minHeight="400px">
+      {chartData && (
+        <BarChart
+          chartData={chartData}
+          minDate={startDate}
+          maxDate={endDate}
+          unit={unit}
+          stacked={true}
+          renderXLabel={renderXLabel}
+          height="400px"
+          hiddenLabels={hiddenLabels}
+          onLegendClick={handleLegendClick}
+          onBarClick={handleBarClick}
+        />
+      )}
+    </LoadingPanel>
   );
 }
-
-export default EventsChart;

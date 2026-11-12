@@ -1,4 +1,7 @@
-.container {
-  overflow: hidden;
-  position: relative;
+.geography {
+  outline: none;
+}
+
+.geography:hover {
+  fill: var(--map-hover-color);
 }

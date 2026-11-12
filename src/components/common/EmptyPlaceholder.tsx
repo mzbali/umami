@@ -1,22 +1,48 @@
-import { ReactNode } from 'react';
-import { Icon, Text, Flexbox } from 'react-basics';
-import Logo from 'assets/logo.svg';
+import { Box, Column, Icon, Text } from '@umami/react-zen';
+import type { ReactNode } from 'react';
 
 export interface EmptyPlaceholderProps {
-  message?: string;
+  title?: string;
+  description?: string;
+  icon?: ReactNode;
+  minHeight?: string;
   children?: ReactNode;
 }
 
-export function EmptyPlaceholder({ message, children }: EmptyPlaceholderProps) {
+export function EmptyPlaceholder({
+  title,
+  description,
+  icon,
+  minHeight,
+  children,
+}: EmptyPlaceholderProps) {
   return (
-    <Flexbox direction="column" alignItems="center" justifyContent="center" gap={60} height={600}>
-      <Icon size="xl">
-        <Logo />
-      </Icon>
-      <Text size="lg">{message}</Text>
-      <div>{children}</div>
-    </Flexbox>
+    <Column
+      alignItems="center"
+      justifyContent="center"
+      gap="5"
+      height="100%"
+      width="100%"
+      minHeight={minHeight}
+    >
+      {icon && (
+        <Icon color="muted" size="xl">
+          {icon}
+        </Icon>
+      )}
+      {title && (
+        <Text weight="bold" size="base">
+          {title}
+        </Text>
+      )}
+      {description && (
+        <Box maxWidth="560px">
+          <Text as="div" color="muted" align="center">
+            {description}
+          </Text>
+        </Box>
+      )}
+      {children}
+    </Column>
   );
 }
-
-export default EmptyPlaceholder;

@@ -1,11 +1,8 @@
-'use client';
-import PageHeader from 'components/layout/PageHeader';
-import { useMessages } from 'components/hooks';
+import { SectionHeader } from '@/components/common/SectionHeader';
+import { useMessages } from '@/components/hooks';
 
 export function ProfileHeader() {
-  const { formatMessage, labels } = useMessages();
+  const { t, labels } = useMessages();
 
-  return <PageHeader title={formatMessage(labels.profile)}></PageHeader>;
+  return <SectionHeader title={t(labels.profile)}></SectionHeader>;
 }
-
-export default ProfileHeader;

@@ -1,54 +1,52 @@
-import { getMinimumUnit, parseDateRange } from 'lib/date';
-import { setItem } from 'next-basics';
-import { DATE_RANGE_CONFIG, DEFAULT_DATE_RANGE } from 'lib/constants';
-import websiteStore, { setWebsiteDateRange } from 'store/websites';
-import appStore, { setDateRange } from 'store/app';
-import { DateRange } from 'lib/types';
-import useLocale from './useLocale';
-import useApi from './useApi';
+import { toZonedTime } from 'date-fns-tz';
+import { useMemo } from 'react';
+import { useLocale } from '@/components/hooks/useLocale';
+import { useNavigation } from '@/components/hooks/useNavigation';
+import { DATE_RANGE_CONFIG, DEFAULT_DATE_RANGE_VALUE } from '@/lib/constants';
+import { getCompareDate, getOffsetDateRange, parseDateRange } from '@/lib/date';
+import { getItem } from '@/lib/storage';
 
-export function useDateRange(websiteId?: string) {
-  const { get } = useApi();
+export function useDateRange(options: { ignoreOffset?: boolean; timezone?: string } = {}) {
+  const {
+    query: { date = '', unit = '', offset = 0, compare = 'prev' },
+  } = useNavigation();
   const { locale } = useLocale();
-  const websiteConfig = websiteStore(state => state[websiteId]?.dateRange);
-  const defaultConfig = DEFAULT_DATE_RANGE;
-  const globalConfig = appStore(state => state.dateRange);
-  const dateRange = parseDateRange(websiteConfig || globalConfig || defaultConfig, locale);
+  const dateRange = useMemo(() => {
+    let dateRangeObject = parseDateRange(
+      date || getItem(DATE_RANGE_CONFIG) || DEFAULT_DATE_RANGE_VALUE,
+      unit,
+      locale,
+      options.timezone,
+    );
 
-  const saveDateRange = async (value: DateRange | string) => {
-    if (websiteId) {
-      let dateRange: DateRange | string = value;
-
-      if (typeof value === 'string') {
-        if (value === 'all') {
-          const result: any = await get(`/websites/${websiteId}/daterange`);
-          const { mindate, maxdate } = result;
-
-          const startDate = new Date(mindate);
-          const endDate = new Date(maxdate);
-
-          dateRange = {
-            startDate,
-            endDate,
-            unit: getMinimumUnit(startDate, endDate),
-            value,
-          };
-        } else {
-          dateRange = parseDateRange(value, locale);
-        }
-      }
-
-      setWebsiteDateRange(websiteId, dateRange as DateRange);
-    } else {
-      setItem(DATE_RANGE_CONFIG, value);
-      setDateRange(value);
+    if (!dateRangeObject) {
+      dateRangeObject = parseDateRange(DEFAULT_DATE_RANGE_VALUE, unit, locale, options.timezone);
     }
+
+    return !options.ignoreOffset && offset
+      ? getOffsetDateRange(dateRangeObject, +offset)
+      : dateRangeObject;
+  }, [date, unit, offset, options, locale]);
+
+  const now = new Date();
+  const dateCompare = getCompareDate(
+    compare,
+    dateRange.startDate,
+    dateRange.endDate,
+    options.timezone ? toZonedTime(now, options.timezone) : now,
+  );
+  // In the first hour of a period no whole hour has elapsed, so the comparison window is empty.
+  const hasComparison = !(dateCompare.endDate < dateCompare.startDate);
+
+  return {
+    date,
+    unit,
+    offset,
+    compare,
+    isAllTime: date.endsWith(`:all`),
+    isCustomRange: date.startsWith('range:'),
+    dateRange,
+    dateCompare,
+    hasComparison,
   };
-
-  return [dateRange, saveDateRange] as [
-    { startDate: Date; endDate: Date; modified?: number },
-    (value: string | DateRange) => void,
-  ];
 }
-
-export default useDateRange;

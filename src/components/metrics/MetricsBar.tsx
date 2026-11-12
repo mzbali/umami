@@ -1,31 +1,36 @@
-import { ReactNode } from 'react';
-import { Loading, cloneChildren } from 'react-basics';
-import ErrorMessage from 'components/common/ErrorMessage';
-import { formatLongNumber } from 'lib/format';
+import { Box, Grid, type GridProps } from '@umami/react-zen';
+import { createContext, type ReactNode, useContext } from 'react';
 import styles from './MetricsBar.module.css';
 
-export interface MetricsBarProps {
-  isLoading?: boolean;
-  isFetched?: boolean;
-  error?: unknown;
+const MetricsBarJoinedContext = createContext(false);
+
+/** True inside a joined `MetricsBar`, where the bar draws the border and background, not each card. */
+export function useMetricsBarJoined() {
+  return useContext(MetricsBarJoinedContext);
+}
+
+export interface MetricsBarProps extends GridProps {
+  /** Group the cards in one bordered container, separated by divider lines. Set false for separate cards. */
+  joined?: boolean;
   children?: ReactNode;
 }
 
-export function MetricsBar({ children, isLoading, isFetched, error }: MetricsBarProps) {
-  const formatFunc = n => (n >= 0 ? formatLongNumber(n) : `-${formatLongNumber(Math.abs(n))}`);
+export function MetricsBar({ joined = true, children, ...props }: MetricsBarProps) {
+  if (joined) {
+    return (
+      <Box border borderRadius backgroundColor="surface" overflow="hidden">
+        <Grid columns="repeat(auto-fit, minmax(160px, 1fr))" className={styles.joined} {...props}>
+          <MetricsBarJoinedContext.Provider value={true}>
+            {children}
+          </MetricsBarJoinedContext.Provider>
+        </Grid>
+      </Box>
+    );
+  }
 
   return (
-    <div className={styles.bar}>
-      {isLoading && !isFetched && <Loading icon="dots" />}
-      {error && <ErrorMessage />}
-      {!isLoading &&
-        !error &&
-        isFetched &&
-        cloneChildren(children, child => {
-          return { format: child.props.format || formatFunc };
-        })}
-    </div>
+    <Grid columns="repeat(auto-fit, minmax(160px, 1fr))" gap {...props}>
+      {children}
+    </Grid>
   );
 }
-
-export default MetricsBar;
